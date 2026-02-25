@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import random
@@ -43,7 +43,17 @@ DAILY_DIALOG_LIMIT = 3
 SUBSCRIPTION_PRICE_RUB = 500
 PAYMENT_REQUISITES = '2200701789834873'
 PAYMENT_BANK = 'Т-банк'
-MENU_IMAGE_PATH = Path(__file__).resolve().parent.parent / 'image.png'
+def resolve_menu_image_path() -> Path | None:
+    current_file = Path(__file__).resolve()
+    candidates = [
+        current_file.parent / 'image.png',  # flat layout: /app/handlers.py + /app/image.png
+        current_file.parent.parent / 'image.png',  # package layout: /app/bot/handlers.py + /app/image.png
+        Path.cwd() / 'image.png',  # runtime cwd fallback
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 WELCOME_TEXT = (
     '✨ <b>Анонимный чат</b>\n\n'
@@ -223,10 +233,11 @@ def user_router(
     router = Router(name='user')
 
     async def send_menu_screen(message: Message, text: str) -> None:
-        if MENU_IMAGE_PATH.exists():
+        menu_image_path = resolve_menu_image_path()
+        if menu_image_path is not None:
             try:
                 await message.answer_photo(
-                    photo=FSInputFile(MENU_IMAGE_PATH),
+                    photo=FSInputFile(menu_image_path),
                     caption=text,
                     reply_markup=main_menu_keyboard(),
                 )
@@ -264,6 +275,65 @@ def user_router(
         await message.answer(SEARCHING_TEXT)
         await asyncio.sleep(search_delay_seconds())
         await message.answer(DIALOG_FOUND_TEXT, reply_markup=chat_keyboard())
+
+    async def ensure_chat_session(message: Message, state: FSMContext) -> SessionData | None:
+        session = storage.get_session(message.from_user.id)
+        if session:
+            return session
+        await state.clear()
+        await message.answer('Сессия завершена. Нажми <b>🔥 Начать чат</b>, чтобы открыть новую.')
+        return None
+
+    async def check_message_rate_limit(message: Message) -> bool:
+        user_id = message.from_user.id
+        if storage.is_rate_limited(
+            user_id,
+            limit=settings.rate_limit_messages,
+            period_seconds=settings.rate_limit_period,
+        ):
+            await message.answer('⏳ Слишком быстро 😉 Подожди пару секунд и продолжим.')
+            return False
+        return True
+
+    async def ask_llm_and_reply(
+        message: Message,
+        session: SessionData,
+        user_content: str,
+    ) -> None:
+        user_id = message.from_user.id
+        session.history.append({'role': 'user', 'content': user_content})
+
+        try:
+            reply = await llm.generate_reply(session.history)
+        except LLMAPIError as exc:
+            await channel_logger.api_error(user_id, str(exc))
+            if str(exc) == 'NSCALE_RATE_LIMIT':
+                await message.answer('⚠️ Сервис временно перегружен. Попробуй еще раз через минуту.')
+                return
+            if str(exc) == 'NSCALE_MODEL_NOT_FOUND':
+                await message.answer('⚙️ Модель сейчас недоступна. Проверь NSCALE_MODEL в .env.')
+                return
+            if str(exc) == 'NSCALE_AUTH_ERROR':
+                await message.answer('🔑 Проблема с ключом NSCALE. Проверь NSCALE_SERVICE_TOKEN в .env.')
+                return
+            if str(exc) == 'NSCALE_TIMEOUT':
+                await message.answer('⌛ NSCALE отвечает слишком долго. Попробуй еще раз через пару секунд.')
+                return
+            if str(exc) == 'PROXY_SOCKS_NOT_SUPPORTED_INSTALL_AIOHTTP_SOCKS':
+                await message.answer('🧩 Нужен пакет aiohttp-socks для SOCKS5. Установи зависимости и перезапусти бота.')
+                return
+            await message.answer('💤 Собеседник немного занят. Давай попробуем еще раз через пару секунд.')
+            return
+
+        await send_typing_for(message, typing_duration_seconds(reply))
+
+        session.history.append({'role': 'assistant', 'content': reply})
+        storage.increment_messages(user_id)
+
+        if len(session.history) > 30:
+            session.history = session.history[-30:]
+
+        await message.answer(reply)
 
     @router.message(CommandStart())
     async def command_start(message: Message, state: FSMContext) -> None:
@@ -357,53 +427,14 @@ def user_router(
         user_id = message.from_user.id
         storage.register_user(user_id, message.from_user.username)
 
-        if storage.is_rate_limited(
-            user_id,
-            limit=settings.rate_limit_messages,
-            period_seconds=settings.rate_limit_period,
-        ):
-            await message.answer('⏳ Слишком быстро 😉 Подожди пару секунд и продолжим.')
+        if not await check_message_rate_limit(message):
             return
 
-        session = storage.get_session(user_id)
+        session = await ensure_chat_session(message, state)
         if not session:
-            await state.clear()
-            await message.answer('Сессия завершена. Нажми <b>🔥 Начать чат</b>, чтобы открыть новую.')
             return
 
-        session.history.append({'role': 'user', 'content': message.text})
-
-        try:
-            reply = await llm.generate_reply(session.history)
-        except LLMAPIError as exc:
-            await channel_logger.api_error(user_id, str(exc))
-            if str(exc) == 'NSCALE_RATE_LIMIT':
-                await message.answer('⚠️ Сервис временно перегружен. Попробуй еще раз через минуту.')
-                return
-            if str(exc) == 'NSCALE_MODEL_NOT_FOUND':
-                await message.answer('⚙️ Модель сейчас недоступна. Проверь NSCALE_MODEL в .env.')
-                return
-            if str(exc) == 'NSCALE_AUTH_ERROR':
-                await message.answer('🔑 Проблема с ключом NSCALE. Проверь NSCALE_SERVICE_TOKEN в .env.')
-                return
-            if str(exc) == 'NSCALE_TIMEOUT':
-                await message.answer('⌛ NSCALE отвечает слишком долго. Попробуй еще раз через пару секунд.')
-                return
-            if str(exc) == 'PROXY_SOCKS_NOT_SUPPORTED_INSTALL_AIOHTTP_SOCKS':
-                await message.answer('🧩 Нужен пакет aiohttp-socks для SOCKS5. Установи зависимости и перезапусти бота.')
-                return
-            await message.answer('💤 Собеседник немного занят. Давай попробуем еще раз через пару секунд.')
-            return
-
-        await send_typing_for(message, typing_duration_seconds(reply))
-
-        session.history.append({'role': 'assistant', 'content': reply})
-        storage.increment_messages(user_id)
-
-        if len(session.history) > 30:
-            session.history = session.history[-30:]
-
-        await message.answer(reply)
+        await ask_llm_and_reply(message, session, message.text)
 
     @router.message()
     async def fallback(message: Message) -> None:
