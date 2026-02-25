@@ -1,3 +1,15 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+
+try:
+    from bot.main import main
+except ModuleNotFoundError:
+    # Fallback for flat deployments where files are placed directly in /app
     project_root = Path(__file__).resolve().parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
