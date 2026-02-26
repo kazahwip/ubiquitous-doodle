@@ -39,7 +39,7 @@ BTN_BACK_MENU = '⬅️ В меню'
 BTN_NEXT = '➡️ Следующий собеседник'
 BTN_END = '❌ Завершить диалог'
 
-DAILY_DIALOG_LIMIT = 3
+DAILY_DIALOG_LIMIT = 8
 SUBSCRIPTION_PRICE_RUB = 500
 PAYMENT_REQUISITES = '2200701789834873'
 PAYMENT_BANK = 'Т-банк'
@@ -441,3 +441,4 @@ def user_router(
         await send_menu_screen(message, FALLBACK_TEXT)
 
     return router
+
