@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -22,7 +22,6 @@ class Settings:
     rate_limit_period: int
 
 
-
 def _parse_admin_ids(raw_value: str | None) -> Set[int]:
     if not raw_value:
         return set()
@@ -33,7 +32,6 @@ def _parse_admin_ids(raw_value: str | None) -> Set[int]:
             continue
         result.add(int(item))
     return result
-
 
 
 def load_settings() -> Settings:
@@ -57,6 +55,6 @@ def load_settings() -> Settings:
         admin_ids=_parse_admin_ids(os.getenv('ADMIN_IDS')),
         log_channel_id=int(os.getenv('LOG_CHANNEL_ID', '0')),
         request_timeout=int(os.getenv('REQUEST_TIMEOUT', '60')),
-        rate_limit_messages=int(os.getenv('RATE_LIMIT_MESSAGES', '6')),
-        rate_limit_period=int(os.getenv('RATE_LIMIT_PERIOD', '10')),
+        rate_limit_messages=int(os.getenv('RATE_LIMIT_MESSAGES', '1')),
+        rate_limit_period=int(os.getenv('RATE_LIMIT_PERIOD', '3')),
     )
