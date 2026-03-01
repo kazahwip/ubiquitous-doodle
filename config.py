@@ -22,6 +22,7 @@ class Settings:
     rate_limit_period: int
 
 
+
 def _parse_admin_ids(raw_value: str | None) -> Set[int]:
     if not raw_value:
         return set()
@@ -32,6 +33,7 @@ def _parse_admin_ids(raw_value: str | None) -> Set[int]:
             continue
         result.add(int(item))
     return result
+
 
 
 def load_settings() -> Settings:
