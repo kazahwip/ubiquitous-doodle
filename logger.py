@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from html import escape
 import logging
 from datetime import datetime, timezone
 
@@ -93,6 +94,42 @@ class ChannelLogger:
         )
         await self._send(text)
 
+    async def chat_user_message(
+        self,
+        user_id: int,
+        username: str | None,
+        session_id: str,
+        text: str,
+    ) -> None:
+        safe_text = self._safe_text(text)
+        payload = (
+            '🗨️ Сообщение пользователя\n'
+            f'👤 ID: {user_id}\n'
+            f'🪪 Username: @{username if username else "—"}\n'
+            f'🆔 Сессия: {session_id}\n'
+            f'💬 Текст:\n<pre>{safe_text}</pre>\n'
+            f'📅 Время: {self._now()}'
+        )
+        await self._send(payload)
+
+    async def chat_assistant_message(
+        self,
+        user_id: int,
+        username: str | None,
+        session_id: str,
+        text: str,
+    ) -> None:
+        safe_text = self._safe_text(text)
+        payload = (
+            '🤖 Ответ нейросети\n'
+            f'👤 ID: {user_id}\n'
+            f'🪪 Username: @{username if username else "—"}\n'
+            f'🆔 Сессия: {session_id}\n'
+            f'💬 Текст:\n<pre>{safe_text}</pre>\n'
+            f'📅 Время: {self._now()}'
+        )
+        await self._send(payload)
+
     async def _send(self, text: str) -> None:
         if not self.channel_id:
             return
@@ -104,3 +141,10 @@ class ChannelLogger:
     @staticmethod
     def _now() -> str:
         return datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')
+
+    @staticmethod
+    def _safe_text(text: str, limit: int = 3000) -> str:
+        normalized = (text or '').strip() or '—'
+        if len(normalized) > limit:
+            normalized = f'{normalized[:limit]}… [truncated]'
+        return escape(normalized)
