@@ -5,8 +5,9 @@ import random
 import uuid
 from pathlib import Path
 from time import monotonic
+from typing import Any, Awaitable, Callable, Dict
 
-from aiogram import F, Router
+from aiogram import BaseMiddleware, F, Router
 from aiogram.enums import ChatAction
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -29,6 +30,29 @@ class ChatState(StatesGroup):
     in_dialog = State()
 
 
+class PerUserMessageRateLimitMiddleware(BaseMiddleware):
+    def __init__(self, storage: InMemoryStorage, limit: int, period_seconds: int) -> None:
+        self._storage = storage
+        self._limit = limit
+        self._period_seconds = period_seconds
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any],
+    ) -> Any:
+        user = event.from_user
+        if user and self._storage.is_rate_limited(
+            user.id,
+            limit=self._limit,
+            period_seconds=self._period_seconds,
+        ):
+            await event.answer('⏳ Слишком быстро 😉 Подожди 3 секунды и продолжим.')
+            return None
+        return await handler(event, data)
+
+
 BTN_START = '🔥 Начать чат'
 BTN_ABOUT = 'ℹ️ О боте'
 BTN_SUPPORT = '🆘 Поддержка'
@@ -39,7 +63,7 @@ BTN_BACK_MENU = '⬅️ В меню'
 BTN_NEXT = '➡️ Следующий собеседник'
 BTN_END = '❌ Завершить диалог'
 
-DAILY_DIALOG_LIMIT = 5
+DAILY_DIALOG_LIMIT = 3
 SUBSCRIPTION_PRICE_RUB = 500
 PAYMENT_REQUISITES = '2200701789834873'
 PAYMENT_BANK = 'Т-банк'
@@ -231,6 +255,13 @@ def user_router(
     channel_logger: ChannelLogger,
 ) -> Router:
     router = Router(name='user')
+    router.message.middleware(
+        PerUserMessageRateLimitMiddleware(
+            storage=storage,
+            limit=settings.rate_limit_messages,
+            period_seconds=settings.rate_limit_period,
+        )
+    )
 
     async def send_menu_screen(message: Message, text: str) -> None:
         menu_image_path = resolve_menu_image_path()
@@ -284,17 +315,6 @@ def user_router(
         await message.answer('Сессия завершена. Нажми <b>🔥 Начать чат</b>, чтобы открыть новую.')
         return None
 
-    async def check_message_rate_limit(message: Message) -> bool:
-        user_id = message.from_user.id
-        if storage.is_rate_limited(
-            user_id,
-            limit=settings.rate_limit_messages,
-            period_seconds=settings.rate_limit_period,
-        ):
-            await message.answer('⏳ Слишком быстро 😉 Подожди пару секунд и продолжим.')
-            return False
-        return True
-
     async def ask_llm_and_reply(
         message: Message,
         session: SessionData,
@@ -318,6 +338,9 @@ def user_router(
                 return
             if str(exc) == 'NSCALE_TIMEOUT':
                 await message.answer('⌛ NSCALE отвечает слишком долго. Попробуй еще раз через пару секунд.')
+                return
+            if str(exc) == 'NSCALE_TRUNCATED_RESPONSE':
+                await message.answer('⚠️ Ответ получился слишком длинным и оборвался. Попробуй отправить сообщение еще раз.')
                 return
             if str(exc) == 'PROXY_SOCKS_NOT_SUPPORTED_INSTALL_AIOHTTP_SOCKS':
                 await message.answer('🧩 Нужен пакет aiohttp-socks для SOCKS5. Установи зависимости и перезапусти бота.')
@@ -427,9 +450,6 @@ def user_router(
         user_id = message.from_user.id
         storage.register_user(user_id, message.from_user.username)
 
-        if not await check_message_rate_limit(message):
-            return
-
         session = await ensure_chat_session(message, state)
         if not session:
             return
@@ -441,5 +461,3 @@ def user_router(
         await send_menu_screen(message, FALLBACK_TEXT)
 
     return router
-
-
