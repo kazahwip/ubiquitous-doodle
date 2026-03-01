@@ -321,7 +321,9 @@ def user_router(
         user_content: str,
     ) -> None:
         user_id = message.from_user.id
+        username = message.from_user.username
         session.history.append({'role': 'user', 'content': user_content})
+        await channel_logger.chat_user_message(user_id, username, session.session_id, user_content)
 
         try:
             reply = await llm.generate_reply(session.history)
@@ -348,6 +350,7 @@ def user_router(
             await message.answer('💤 Собеседник немного занят. Давай попробуем еще раз через пару секунд.')
             return
 
+        await channel_logger.chat_assistant_message(user_id, username, session.session_id, reply)
         await send_typing_for(message, typing_duration_seconds(reply))
 
         session.history.append({'role': 'assistant', 'content': reply})
