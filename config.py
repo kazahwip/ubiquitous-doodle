@@ -20,6 +20,8 @@ class Settings:
     request_timeout: int
     rate_limit_messages: int
     rate_limit_period: int
+    required_channel: str
+    required_channel_url: str
 
 
 
@@ -59,4 +61,6 @@ def load_settings() -> Settings:
         request_timeout=int(os.getenv('REQUEST_TIMEOUT', '60')),
         rate_limit_messages=int(os.getenv('RATE_LIMIT_MESSAGES', '1')),
         rate_limit_period=int(os.getenv('RATE_LIMIT_PERIOD', '3')),
+        required_channel=os.getenv('REQUIRED_CHANNEL', '').strip(),
+        required_channel_url=os.getenv('REQUIRED_CHANNEL_URL', '').strip(),
     )
