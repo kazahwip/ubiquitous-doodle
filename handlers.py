@@ -7,12 +7,22 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Awaitable, Callable, Dict
 
-from aiogram import BaseMiddleware, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.enums import ChatAction
+from aiogram.enums.chat_member_status import ChatMemberStatus
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 
 try:
     from .config import Settings
@@ -51,6 +61,65 @@ class PerUserMessageRateLimitMiddleware(BaseMiddleware):
             await event.answer('⏳ Слишком быстро 😉 Подожди 3 секунды и продолжим.')
             return None
         return await handler(event, data)
+
+
+class RequiredChannelSubscriptionMiddleware(BaseMiddleware):
+    def __init__(
+        self,
+        required_channel: str,
+        required_channel_url: str,
+        admin_ids: set[int],
+    ) -> None:
+        self._required_channel = required_channel
+        self._required_channel_url = required_channel_url
+        self._admin_ids = admin_ids
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: Dict[str, Any],
+    ) -> Any:
+        user = event.from_user
+        if not user or not self._required_channel:
+            return await handler(event, data)
+        if user.id in self._admin_ids:
+            return await handler(event, data)
+
+        has_subscription = await has_required_channel_membership(
+            event.bot,
+            user.id,
+            self._required_channel,
+        )
+        if has_subscription:
+            return await handler(event, data)
+
+        state = data.get('state')
+        if isinstance(state, FSMContext):
+            await state.clear()
+        await event.answer(
+            self._required_subscription_text(),
+            reply_markup=self._required_subscription_keyboard(),
+            disable_web_page_preview=True,
+        )
+        return None
+
+    def _required_subscription_text(self) -> str:
+        channel_display = self._required_channel_url or self._required_channel
+        return (
+            '🔒 Для использования бота нужна подписка на канал.\n\n'
+            f'Подпишись на: {channel_display}\n'
+            'После подписки нажми кнопку <b>✅ Проверить подписку</b>.'
+        )
+
+    def _required_subscription_keyboard(self) -> InlineKeyboardMarkup:
+        buttons = []
+        if self._required_channel_url:
+            buttons.append(
+                [InlineKeyboardButton(text='📢 Подписаться на канал', url=self._required_channel_url)]
+            )
+        buttons.append([InlineKeyboardButton(text='✅ Проверить подписку', callback_data='check_required_sub')])
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 BTN_START = '🔥 Начать чат'
@@ -189,6 +258,20 @@ def parse_referrer_id(start_text: str) -> int | None:
     return int(raw_id)
 
 
+async def has_required_channel_membership(bot: Bot, user_id: int, required_channel: str) -> bool:
+    try:
+        chat_member = await bot.get_chat_member(chat_id=required_channel, user_id=user_id)
+    except TelegramBadRequest:
+        return False
+    except Exception:
+        return False
+    return chat_member.status in {
+        ChatMemberStatus.CREATOR,
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.MEMBER,
+    }
+
+
 
 def user_status_text(storage: InMemoryStorage, user_id: int) -> str:
     referrals = storage.referral_count(user_id)
@@ -256,6 +339,13 @@ def user_router(
 ) -> Router:
     router = Router(name='user')
     router.message.middleware(
+        RequiredChannelSubscriptionMiddleware(
+            required_channel=settings.required_channel,
+            required_channel_url=settings.required_channel_url,
+            admin_ids=settings.admin_ids,
+        )
+    )
+    router.message.middleware(
         PerUserMessageRateLimitMiddleware(
             storage=storage,
             limit=settings.rate_limit_messages,
@@ -276,6 +366,24 @@ def user_router(
             except Exception:
                 pass
         await message.answer(text, reply_markup=main_menu_keyboard())
+
+    @router.callback_query(F.data == 'check_required_sub')
+    async def check_required_subscription(callback: CallbackQuery) -> None:
+        user = callback.from_user
+        if (
+            user.id not in settings.admin_ids
+            and settings.required_channel
+            and not await has_required_channel_membership(
+                callback.bot,
+                user.id,
+                settings.required_channel,
+            )
+        ):
+            await callback.answer('Подписка пока не найдена.', show_alert=True)
+            return
+        await callback.answer('Подписка подтверждена.')
+        if callback.message is not None:
+            await send_menu_screen(callback.message, WELCOME_TEXT)
 
     async def start_dialog(message: Message, state: FSMContext) -> None:
         user_id = message.from_user.id
