@@ -153,6 +153,10 @@ PAID_CONTENT_TRIGGER_KEYWORDS = (
     'видео',
     'видос',
 )
+PAID_CONTENT_TRIGGER_EXCEPTIONS = (
+    'скинь прайс',
+    'скинь цены',
+)
 def resolve_menu_image_path() -> Path | None:
     current_file = Path(__file__).resolve()
     candidates = [
@@ -271,6 +275,8 @@ def paid_content_keyboard() -> ReplyKeyboardMarkup:
 def is_paid_content_trigger(text: str) -> bool:
     normalized = (text or '').strip().lower()
     if not normalized:
+        return False
+    if any(phrase in normalized for phrase in PAID_CONTENT_TRIGGER_EXCEPTIONS):
         return False
     return any(keyword in normalized for keyword in PAID_CONTENT_TRIGGER_KEYWORDS)
 
@@ -650,6 +656,7 @@ def user_router(
         if is_paid_content_trigger(message.text):
             offered_price = random.randint(PAID_CONTENT_PRICE_MIN_RUB, PAID_CONTENT_PRICE_MAX_RUB)
             session.pending_paid_content_price = offered_price
+            await send_typing_for(message, 4.0)
             await message.answer(
                 paid_content_offer_text(offered_price),
                 reply_markup=paid_content_keyboard(),
