@@ -54,12 +54,19 @@ class ChannelLogger:
         )
         await self._send(text)
 
-    async def payment_request(self, user_id: int, username: str | None) -> None:
+    async def payment_request(
+        self,
+        user_id: int,
+        username: str | None,
+        amount_rub: int = 500,
+        tariff_label: str = 'Подписка',
+    ) -> None:
         text = (
             '💳 Заявка на проверку оплаты\n'
             f'👤 ID: {user_id}\n'
             f'🪪 Username: @{username if username else "—"}\n'
-            '💰 Тариф: 500 RUB\n'
+            f'💰 Тариф: {tariff_label}\n'
+            f'💵 Сумма: {amount_rub} RUB\n'
             f'📅 Время: {self._now()}'
         )
         await self._send(text)
