@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from collections import defaultdict, deque
@@ -18,6 +18,7 @@ class SessionData:
     history: List[dict[str, str]] = field(default_factory=list)
     messages_count: int = 0
     active: bool = True
+    pending_paid_content_price: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
