@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from time import monotonic
 from typing import Any, Awaitable, Callable, Dict
+from urllib.parse import urlparse
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -311,8 +312,12 @@ def parse_referrer_id(start_text: str) -> int | None:
 
 
 async def has_required_channel_membership(bot: Bot, user_id: int, required_channel: str) -> bool:
+    chat_id = normalize_required_channel_chat_id(required_channel)
+    if chat_id is None:
+        return False
+
     try:
-        chat_member = await bot.get_chat_member(chat_id=required_channel, user_id=user_id)
+        chat_member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
     except TelegramBadRequest:
         return False
     except Exception:
@@ -322,6 +327,39 @@ async def has_required_channel_membership(bot: Bot, user_id: int, required_chann
         ChatMemberStatus.ADMINISTRATOR,
         ChatMemberStatus.MEMBER,
     }
+
+
+def normalize_required_channel_chat_id(required_channel: str) -> int | str | None:
+    value = (required_channel or '').strip()
+    if not value:
+        return None
+
+    if value.startswith('@'):
+        username = value[1:]
+        if username and username.replace('_', '').isalnum():
+            return value
+        return None
+
+    if value.lstrip('-').isdigit():
+        return int(value)
+
+    if value.startswith(('http://', 'https://', 't.me/')):
+        normalized_url = value if value.startswith(('http://', 'https://')) else f'https://{value}'
+        parsed = urlparse(normalized_url)
+        host = parsed.netloc.lower()
+        if host in {'t.me', 'telegram.me'}:
+            path = parsed.path.strip('/')
+            if not path or path.startswith('+') or path.startswith('joinchat/'):
+                return None
+            slug = path.split('/')[0]
+            if slug and slug.replace('_', '').isalnum():
+                return f'@{slug}'
+        return None
+
+    if value.replace('_', '').isalnum():
+        return f'@{value}'
+
+    return None
 
 
 
