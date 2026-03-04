@@ -130,14 +130,16 @@ BTN_SUBSCRIPTION = '💎 Подписка'
 BTN_REFERRAL = '🎁 Рефералы'
 BTN_PAYMENT_SENT = '✅ Отправил деньги, проверьте'
 BTN_PAID_CONTENT_PAYMENT_SENT = '✅ Оплатил контент'
+BTN_PAID_CONTENT_UNLOCK_REFERRALS = '🎁 Открыть за рефералов'
 BTN_BACK_MENU = '⬅️ В меню'
 BTN_NEXT = '➡️ Следующий собеседник'
 BTN_END = '❌ Завершить диалог'
 
-DAILY_DIALOG_LIMIT = 5
+DAILY_DIALOG_LIMIT = 3
 SUBSCRIPTION_PRICE_RUB = 500
 PAID_CONTENT_PRICE_MIN_RUB = 300
 PAID_CONTENT_PRICE_MAX_RUB = 700
+PAID_CONTENT_REFERRALS_REQUIRED = 3
 PAYMENT_REQUISITES = '2200701789834873'
 PAYMENT_BANK = 'Т-банк'
 PAID_CONTENT_TRIGGER_KEYWORDS = (
@@ -267,6 +269,7 @@ def paid_content_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_PAID_CONTENT_PAYMENT_SENT)],
+            [KeyboardButton(text=BTN_PAID_CONTENT_UNLOCK_REFERRALS)],
             [KeyboardButton(text=BTN_NEXT), KeyboardButton(text=BTN_END)],
         ],
         resize_keyboard=True,
@@ -282,15 +285,25 @@ def is_paid_content_trigger(text: str) -> bool:
     return any(keyword in normalized for keyword in PAID_CONTENT_TRIGGER_KEYWORDS)
 
 
-def paid_content_offer_text(price_rub: int) -> str:
+def paid_content_offer_text(price_rub: int, referrals: int) -> str:
+    referrals_left = max(0, PAID_CONTENT_REFERRALS_REQUIRED - referrals)
+    referrals_status = (
+        'доступно ✅'
+        if referrals_left == 0
+        else f'нужно еще: <b>{referrals_left}</b>'
+    )
     return (
         '💎 <b>Платный контент</b>\n\n'
         'Пользователь отправил вам платный контент.\n'
         f'Стоимость: <b>{price_rub} ₽</b>\n\n'
+        '<b>Либо открой за рефералов:</b>\n'
+        f'• Требуется: <b>{PAID_CONTENT_REFERRALS_REQUIRED}</b>\n'
+        f'• Твои рефералы: <b>{referrals}</b> ({referrals_status})\n\n'
         '<b>Реквизиты для оплаты:</b>\n'
         f'• Карта: <code>{PAYMENT_REQUISITES}</code>\n'
         f'• Банк: {PAYMENT_BANK}\n\n'
-        'После перевода нажмите кнопку <b>✅ Оплатил контент</b>.'
+        'После перевода нажмите <b>✅ Оплатил контент</b> '
+        'или выберите <b>🎁 Открыть за рефералов</b>.'
     )
 
 
@@ -632,6 +645,39 @@ def user_router(
             reply_markup=chat_keyboard(),
         )
 
+    @router.message(F.text == BTN_PAID_CONTENT_UNLOCK_REFERRALS)
+    async def paid_content_unlock_referrals(message: Message, state: FSMContext) -> None:
+        storage.register_user(message.from_user.id, message.from_user.username)
+        session = await ensure_chat_session(message, state)
+        if not session:
+            return
+
+        if session.pending_paid_content_price is None:
+            await message.answer(
+                'Сейчас нет активного платного предложения. Продолжай диалог или дождись нового оффера.',
+                reply_markup=chat_keyboard(),
+            )
+            return
+
+        referrals = storage.referral_count(message.from_user.id)
+        if referrals < PAID_CONTENT_REFERRALS_REQUIRED:
+            left = PAID_CONTENT_REFERRALS_REQUIRED - referrals
+            await message.answer(
+                (
+                    '🎁 Пока не хватает рефералов для открытия контента.\n'
+                    f'Текущий прогресс: {referrals}/{PAID_CONTENT_REFERRALS_REQUIRED}.\n'
+                    f'Пригласи еще {left} и нажми кнопку снова.'
+                ),
+                reply_markup=paid_content_keyboard(),
+            )
+            return
+
+        session.pending_paid_content_price = None
+        await message.answer(
+            '✅ Контент открыт за рефералов. Приятного общения!',
+            reply_markup=chat_keyboard(),
+        )
+
     @router.message(F.text == BTN_REFERRAL)
     async def referral_info(message: Message) -> None:
         storage.register_user(message.from_user.id, message.from_user.username)
@@ -694,9 +740,10 @@ def user_router(
         if is_paid_content_trigger(message.text):
             offered_price = random.randint(PAID_CONTENT_PRICE_MIN_RUB, PAID_CONTENT_PRICE_MAX_RUB)
             session.pending_paid_content_price = offered_price
+            referrals = storage.referral_count(user_id)
             await send_typing_for(message, 4.0)
             await message.answer(
-                paid_content_offer_text(offered_price),
+                paid_content_offer_text(offered_price, referrals),
                 reply_markup=paid_content_keyboard(),
             )
             return
@@ -708,4 +755,3 @@ def user_router(
         await send_menu_screen(message, FALLBACK_TEXT)
 
     return router
-
