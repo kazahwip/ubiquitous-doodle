@@ -155,6 +155,8 @@ PAID_CONTENT_TRIGGER_KEYWORDS = (
     '18+',
     'видео',
     'видос',
+    'попку'
+    'покажи'
 )
 PAID_CONTENT_TRIGGER_EXCEPTIONS = (
     'скинь прайс',
@@ -755,3 +757,4 @@ def user_router(
         await send_menu_screen(message, FALLBACK_TEXT)
 
     return router
+
